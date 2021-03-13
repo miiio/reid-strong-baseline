@@ -5,3 +5,4 @@
 """
 
 from .triplet_sampler import RandomIdentitySampler, RandomIdentitySampler_alignedreid   # new add by gu
+from .triplet_sampler import RandomIdentitySamplerIntraCamera # New add by Lao

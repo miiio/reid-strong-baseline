@@ -6,13 +6,15 @@
 
 import glob
 import re
+import sys
+from collections import defaultdict
 
 import os.path as osp
 
 from .bases import BaseImageDataset
 
 
-class Market1501(BaseImageDataset):
+class Market1501MultiCamera(BaseImageDataset):
     """
     Market1501
     Reference:
@@ -23,10 +25,10 @@ class Market1501(BaseImageDataset):
     # identities: 1501 (+1 for background)
     # images: 12936 (train) + 3368 (query) + 15913 (gallery)
     """
-    dataset_dir = 'market1501'
+    dataset_dir = 'Market1501'
 
     def __init__(self, root='/home/haoluo/data', verbose=True, **kwargs):
-        super(Market1501, self).__init__()
+        super(Market1501MultiCamera, self).__init__()
         self.dataset_dir = osp.join(root, self.dataset_dir)
         self.train_dir = osp.join(self.dataset_dir, 'bounding_box_train')
         self.query_dir = osp.join(self.dataset_dir, 'query')
@@ -35,8 +37,8 @@ class Market1501(BaseImageDataset):
         self._check_before_run()
 
         train = self._process_dir(self.train_dir, relabel=True)
-        query = self._process_dir(self.query_dir, relabel=False)
-        gallery = self._process_dir(self.gallery_dir, relabel=False)
+        query = self._process_dir(self.query_dir, relabel=True)
+        gallery = self._process_dir(self.gallery_dir, relabel=True)
 
         if verbose:
             print("=> Market1501 loaded")
@@ -65,20 +67,22 @@ class Market1501(BaseImageDataset):
         img_paths = glob.glob(osp.join(dir_path, '*.jpg'))
         pattern = re.compile(r'([-\d]+)_c(\d)')
 
-        pid_container = set()
+        pid_container = defaultdict(set)
         for img_path in img_paths:
-            pid, _ = map(int, pattern.search(img_path).groups())
+            pid, camid = map(int, pattern.search(img_path).groups())
             if pid == -1: continue  # junk images are just ignored
-            pid_container.add(pid)
-        pid2label = {pid: label for label, pid in enumerate(pid_container)}
-
+            pid_container[camid].add(pid)
+        
+        pid2label = defaultdict(set)
+        for camid in pid_container:
+            pid2label[camid] = {pid: label for label, pid in enumerate(pid_container[camid])}
         dataset = []
         for img_path in img_paths:
             pid, camid = map(int, pattern.search(img_path).groups())
             if pid == -1: continue  # junk images are just ignored
             assert 0 <= pid <= 1501  # pid == 0 means background
             assert 1 <= camid <= 6
+            if relabel: pid = pid2label[camid][pid]
             camid -= 1  # index starts from 0
-            if relabel: pid = pid2label[pid]
             dataset.append((img_path, pid, camid))
         return dataset

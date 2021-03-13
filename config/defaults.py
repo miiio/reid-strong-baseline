@@ -82,6 +82,11 @@ _C.DATALOADER.NUM_WORKERS = 8
 _C.DATALOADER.SAMPLER = 'softmax'
 # Number of instance for one batch
 _C.DATALOADER.NUM_INSTANCE = 16
+# Number of camera
+_C.DATALOADER.NUM_CAMERA = 6
+#Number of identity for one batch
+_C.DATALOADER.NUM_IDS = 2
+
 
 # ---------------------------------------------------------------------------- #
 # Solver

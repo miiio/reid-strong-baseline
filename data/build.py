@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 from .collate_batch import train_collate_fn, val_collate_fn
 from .datasets import init_dataset, ImageDataset
 from .samplers import RandomIdentitySampler, RandomIdentitySampler_alignedreid  # New add by gu
+from .samplers import RandomIdentitySamplerIntraCamera #New add bu Lao
 from .transforms import build_transforms
 
 
@@ -29,6 +30,15 @@ def make_data_loader(cfg):
             train_set, batch_size=cfg.SOLVER.IMS_PER_BATCH, shuffle=True, num_workers=num_workers,
             collate_fn=train_collate_fn
         )
+    elif cfg.DATALOADER.SAMPLER == 'softmax_multi_camera':
+        sampler = RandomIdentitySamplerIntraCamera(dataset.train, cfg.SOLVER.IMS_PER_BATCH, cfg.DATALOADER.NUM_INSTANCE, cfg.DATALOADER.NUM_IDS, cfg.DATALOADER.NUM_CAMERA)
+        #sampler = RandomIdentitySampler(dataset.train, cfg.SOLVER.IMS_PER_BATCH, cfg.DATALOADER.NUM_INSTANCE)
+        train_loader = DataLoader(
+            train_set, batch_size=cfg.SOLVER.IMS_PER_BATCH,
+            sampler=sampler,
+            num_workers=num_workers, collate_fn=train_collate_fn
+        )
+        num_classes = sampler.getPidsNum()
     else:
         train_loader = DataLoader(
             train_set, batch_size=cfg.SOLVER.IMS_PER_BATCH,

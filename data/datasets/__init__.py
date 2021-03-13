@@ -6,12 +6,14 @@
 # from .cuhk03 import CUHK03
 from .dukemtmcreid import DukeMTMCreID
 from .market1501 import Market1501
+from .market1501_multi_camera import Market1501MultiCamera
 from .msmt17 import MSMT17
 from .veri import VeRi
 from .dataset_loader import ImageDataset
 
 __factory = {
     'market1501': Market1501,
+    'Market1501_multi_camera': Market1501MultiCamera,
     # 'cuhk03': CUHK03,
     'dukemtmc': DukeMTMCreID,
     'msmt17': MSMT17,

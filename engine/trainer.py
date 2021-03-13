@@ -5,6 +5,7 @@
 """
 
 import logging
+import sys
 
 import torch
 import torch.nn as nn
@@ -12,10 +13,12 @@ from ignite.engine import Engine, Events
 from ignite.handlers import ModelCheckpoint, Timer
 from ignite.metrics import RunningAverage
 
+from collections import defaultdict
 from utils.reid_metric import R1_mAP
 
 global ITER
 ITER = 0
+
 
 def create_supervised_trainer(model, optimizer, loss_fn,
                               device=None):
@@ -42,7 +45,8 @@ def create_supervised_trainer(model, optimizer, loss_fn,
         optimizer.zero_grad()
         img, target = batch
         img = img.to(device) if torch.cuda.device_count() >= 1 else img
-        target = target.to(device) if torch.cuda.device_count() >= 1 else target
+        target = target.to(
+            device) if torch.cuda.device_count() >= 1 else target
         score, feat = model(img)
         loss = loss_fn(score, feat, target)
         loss.backward()
@@ -54,8 +58,64 @@ def create_supervised_trainer(model, optimizer, loss_fn,
     return Engine(_update)
 
 
+def create_supervised_trainer_multi_camera(model, optimizer, loss_fn, id_association, num_camera, num_ids, num_instance, device=None):
+    """
+    Factory function for creating a trainer for supervised models
+
+    Args:
+        model (`torch.nn.Module`): the model to train
+        optimizer (`torch.optim.Optimizer`): the optimizer to use
+        loss_fn (torch.nn loss function): the loss function to use
+        device (str, optional): device type specification (default: None).
+            Applies to both model and batches.
+
+    Returns:
+        Engine: a trainer engine with supervised update function
+    """
+    if device:
+        if torch.cuda.device_count() > 1:
+            model = nn.DataParallel(model)
+        model.to(device)
+
+    def update_camera_association(all_classifier_score, all_classifier_id, target):
+        # 6 6 2
+        # print(all_classifier_id[0].shape, all_classifier_score[0].shape, target.shape)
+        #sys.exit(0)
+        targets = target.reshape(num_camera, num_ids, -1)
+        for i in range(num_camera):
+            for j in range(num_camera):
+                if i>=j: continue
+                for q in range(num_ids):
+                    for w in range(num_ids):
+                        if all_classifier_id[j][i][w] == targets[j][q][0] and all_classifier_id[i][j][q]==targets[i][w][0]:
+                            if targets[j][q][0] not in id_association[i][targets[i][w][0]]:
+                                id_association[i][targets[i][w][0]].append((targets[j][q][0],j))
+                                print("camera%d:%d -- camera%d:%d"%(i,targets[i][w][0],j,targets[j][q][0]))
+                            if targets[i][w][0] not in id_association[j][targets[j][q][0]]:
+                                id_association[j][targets[j][q][0]].append((targets[i][w][0],i))
+                                
+    def _update(engine, batch):
+        model.train()
+        optimizer.zero_grad()
+        img, target = batch
+        img = img.to(device) if torch.cuda.device_count() >= 1 else img
+        target = target.to(
+            device) if torch.cuda.device_count() >= 1 else target
+        score, all_classifier_score,all_classifier_id = model(img)
+        update_camera_association(all_classifier_score,all_classifier_id,target)
+        loss = loss_fn(score, all_classifier_score, target, id_association)
+        loss.backward()
+        optimizer.step()
+        # compute acc
+        acc_score = torch.cat([i.max(1)[1] for i in score],dim=0)
+        acc = (acc_score == target).float().mean()
+        return loss.item(), acc.item()
+
+    return Engine(_update)
+
+
 def create_supervised_trainer_with_center(model, center_criterion, optimizer, optimizer_center, loss_fn, cetner_loss_weight,
-                              device=None):
+                                          device=None):
     """
     Factory function for creating a trainer for supervised models
 
@@ -80,7 +140,8 @@ def create_supervised_trainer_with_center(model, center_criterion, optimizer, op
         optimizer_center.zero_grad()
         img, target = batch
         img = img.to(device) if torch.cuda.device_count() >= 1 else img
-        target = target.to(device) if torch.cuda.device_count() >= 1 else target
+        target = target.to(
+            device) if torch.cuda.device_count() >= 1 else target
         score, feat = model(img)
         loss = loss_fn(score, feat, target)
         # print("Total loss is {}, center loss is {}".format(loss, center_criterion(feat, target)))
@@ -140,7 +201,8 @@ def do_train(
         scheduler,
         loss_fn,
         num_query,
-        start_epoch
+        start_epoch,
+        num_classes
 ):
     log_period = cfg.SOLVER.LOG_PERIOD
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
@@ -149,11 +211,25 @@ def do_train(
     device = cfg.MODEL.DEVICE
     epochs = cfg.SOLVER.MAX_EPOCHS
 
+    id_association = [defaultdict(list) for i in range(cfg.DATALOADER.NUM_CAMERA)]
+    for i in range(cfg.DATALOADER.NUM_CAMERA):
+        for j in range(num_classes[i]):
+            id_association[i][j].append((j,i))
+
+
     logger = logging.getLogger("reid_baseline.train")
     logger.info("Start training")
-    trainer = create_supervised_trainer(model, optimizer, loss_fn, device=device)
-    evaluator = create_supervised_evaluator(model, metrics={'r1_mAP': R1_mAP(num_query, max_rank=50, feat_norm=cfg.TEST.FEAT_NORM)}, device=device)
-    checkpointer = ModelCheckpoint(output_dir, cfg.MODEL.NAME, checkpoint_period, n_saved=10, require_empty=False)
+    if cfg.DATALOADER.SAMPLER == 'softmax_multi_camera':
+        trainer = create_supervised_trainer_multi_camera(
+            model, optimizer, loss_fn, id_association, cfg.DATALOADER.NUM_CAMERA, cfg.DATALOADER.NUM_IDS, cfg.DATALOADER.NUM_INSTANCE, device=device)
+    else:
+        trainer = create_supervised_trainer(
+            model, optimizer, loss_fn, device=device)
+
+    evaluator = create_supervised_evaluator(model, metrics={'r1_mAP': R1_mAP(
+        num_query, max_rank=50, feat_norm=cfg.TEST.FEAT_NORM)}, device=device)
+    checkpointer = ModelCheckpoint(
+        output_dir, cfg.MODEL.NAME, checkpoint_period, n_saved=10, require_empty=False)
     timer = Timer(average=True)
 
     trainer.add_event_handler(Events.EPOCH_COMPLETED, checkpointer, {'model': model,
@@ -195,15 +271,17 @@ def do_train(
         logger.info('-' * 10)
         timer.reset()
 
-    @trainer.on(Events.EPOCH_COMPLETED)
-    def log_validation_results(engine):
-        if engine.state.epoch % eval_period == 0:
-            evaluator.run(val_loader)
-            cmc, mAP = evaluator.state.metrics['r1_mAP']
-            logger.info("Validation Results - Epoch: {}".format(engine.state.epoch))
-            logger.info("mAP: {:.1%}".format(mAP))
-            for r in [1, 5, 10]:
-                logger.info("CMC curve, Rank-{:<3}:{:.1%}".format(r, cmc[r - 1]))
+    # @trainer.on(Events.EPOCH_COMPLETED)
+    # def log_validation_results(engine):
+    #     if engine.state.epoch % eval_period == 0:
+    #         evaluator.run(val_loader)
+    #         cmc, mAP = evaluator.state.metrics['r1_mAP']
+    #         logger.info(
+    #             "Validation Results - Epoch: {}".format(engine.state.epoch))
+    #         logger.info("mAP: {:.1%}".format(mAP))
+    #         for r in [1, 5, 10]:
+    #             logger.info(
+    #                 "CMC curve, Rank-{:<3}:{:.1%}".format(r, cmc[r - 1]))
 
     trainer.run(train_loader, max_epochs=epochs)
 
@@ -230,9 +308,12 @@ def do_train_with_center(
 
     logger = logging.getLogger("reid_baseline.train")
     logger.info("Start training")
-    trainer = create_supervised_trainer_with_center(model, center_criterion, optimizer, optimizer_center, loss_fn, cfg.SOLVER.CENTER_LOSS_WEIGHT, device=device)
-    evaluator = create_supervised_evaluator(model, metrics={'r1_mAP': R1_mAP(num_query, max_rank=50, feat_norm=cfg.TEST.FEAT_NORM)}, device=device)
-    checkpointer = ModelCheckpoint(output_dir, cfg.MODEL.NAME, checkpoint_period, n_saved=10, require_empty=False)
+    trainer = create_supervised_trainer_with_center(
+        model, center_criterion, optimizer, optimizer_center, loss_fn, cfg.SOLVER.CENTER_LOSS_WEIGHT, device=device)
+    evaluator = create_supervised_evaluator(model, metrics={'r1_mAP': R1_mAP(
+        num_query, max_rank=50, feat_norm=cfg.TEST.FEAT_NORM)}, device=device)
+    checkpointer = ModelCheckpoint(
+        output_dir, cfg.MODEL.NAME, checkpoint_period, n_saved=10, require_empty=False)
     timer = Timer(average=True)
 
     trainer.add_event_handler(Events.EPOCH_COMPLETED, checkpointer, {'model': model,
@@ -282,9 +363,11 @@ def do_train_with_center(
         if engine.state.epoch % eval_period == 0:
             evaluator.run(val_loader)
             cmc, mAP = evaluator.state.metrics['r1_mAP']
-            logger.info("Validation Results - Epoch: {}".format(engine.state.epoch))
+            logger.info(
+                "Validation Results - Epoch: {}".format(engine.state.epoch))
             logger.info("mAP: {:.1%}".format(mAP))
             for r in [1, 5, 10]:
-                logger.info("CMC curve, Rank-{:<3}:{:.1%}".format(r, cmc[r - 1]))
+                logger.info(
+                    "CMC curve, Rank-{:<3}:{:.1%}".format(r, cmc[r - 1]))
 
     trainer.run(train_loader, max_epochs=epochs)

@@ -1,0 +1,2 @@
+python tools/train.py --config_file=H:/code/reid/reid-strong-baseline/configs/my.yml MODEL.DEVICE_ID "('0')" DATASETS.NAMES "('Market1501_multi_camera')" DATASETS.ROOT_DIR "('H:/code/reid/reid-strong-baseline/data')" OUTPUT_DIR "('H:/code/reid/reid-strong-baseline/net/Experiment-my')"
+python tools/train.py --config_file=H:/code/reid/reid-strong-baseline/configs/softmax.yml MODEL.DEVICE_ID "('0')" DATASETS.NAMES "('market1501')" DATASETS.ROOT_DIR "('H:/code/reid/reid-strong-baseline/data')" OUTPUT_DIR "('H:/code/reid/reid-strong-baseline/net/Experiment-my2')"

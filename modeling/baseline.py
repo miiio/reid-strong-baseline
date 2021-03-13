@@ -3,7 +3,7 @@
 @author:  liaoxingyu
 @contact: sherlockliao01@gmail.com
 """
-
+import sys
 import torch
 from torch import nn
 
@@ -163,6 +163,163 @@ class Baseline(nn.Module):
         if self.training:
             cls_score = self.classifier(feat)
             return cls_score, global_feat  # global feature for triplet loss
+        else:
+            if self.neck_feat == 'after':
+                # print("Test with feature after BN")
+                return feat
+            else:
+                # print("Test with feature before BN")
+                return global_feat
+
+    def load_param(self, trained_path):
+        param_dict = torch.load(trained_path)
+        for i in param_dict:
+            if 'classifier' in i:
+                continue
+            self.state_dict()[i].copy_(param_dict[i])
+
+
+class BaselineMATE(nn.Module):
+    in_planes = 2048
+
+    def __init__(self, num_classes, num_camera, num_ids, num_instance, last_stride, model_path, neck, neck_feat, model_name, pretrain_choice):
+        super(BaselineMATE, self).__init__()
+        if model_name == 'resnet18':
+            self.in_planes = 512
+            self.base = ResNet(last_stride=last_stride, 
+                               block=BasicBlock, 
+                               layers=[2, 2, 2, 2])
+        elif model_name == 'resnet34':
+            self.in_planes = 512
+            self.base = ResNet(last_stride=last_stride,
+                               block=BasicBlock,
+                               layers=[3, 4, 6, 3])
+        elif model_name == 'resnet50':
+            self.base = ResNet(last_stride=last_stride,
+                               block=Bottleneck,
+                               layers=[3, 4, 6, 3])
+        elif model_name == 'resnet101':
+            self.base = ResNet(last_stride=last_stride,
+                               block=Bottleneck, 
+                               layers=[3, 4, 23, 3])
+        elif model_name == 'resnet152':
+            self.base = ResNet(last_stride=last_stride, 
+                               block=Bottleneck,
+                               layers=[3, 8, 36, 3])
+            
+        elif model_name == 'se_resnet50':
+            self.base = SENet(block=SEResNetBottleneck, 
+                              layers=[3, 4, 6, 3], 
+                              groups=1, 
+                              reduction=16,
+                              dropout_p=None, 
+                              inplanes=64, 
+                              input_3x3=False,
+                              downsample_kernel_size=1, 
+                              downsample_padding=0,
+                              last_stride=last_stride) 
+        elif model_name == 'se_resnet101':
+            self.base = SENet(block=SEResNetBottleneck, 
+                              layers=[3, 4, 23, 3], 
+                              groups=1, 
+                              reduction=16,
+                              dropout_p=None, 
+                              inplanes=64, 
+                              input_3x3=False,
+                              downsample_kernel_size=1, 
+                              downsample_padding=0,
+                              last_stride=last_stride)
+        elif model_name == 'se_resnet152':
+            self.base = SENet(block=SEResNetBottleneck, 
+                              layers=[3, 8, 36, 3],
+                              groups=1, 
+                              reduction=16,
+                              dropout_p=None, 
+                              inplanes=64, 
+                              input_3x3=False,
+                              downsample_kernel_size=1, 
+                              downsample_padding=0,
+                              last_stride=last_stride)  
+        elif model_name == 'se_resnext50':
+            self.base = SENet(block=SEResNeXtBottleneck,
+                              layers=[3, 4, 6, 3], 
+                              groups=32, 
+                              reduction=16,
+                              dropout_p=None, 
+                              inplanes=64, 
+                              input_3x3=False,
+                              downsample_kernel_size=1, 
+                              downsample_padding=0,
+                              last_stride=last_stride) 
+        elif model_name == 'se_resnext101':
+            self.base = SENet(block=SEResNeXtBottleneck,
+                              layers=[3, 4, 23, 3], 
+                              groups=32, 
+                              reduction=16,
+                              dropout_p=None, 
+                              inplanes=64, 
+                              input_3x3=False,
+                              downsample_kernel_size=1, 
+                              downsample_padding=0,
+                              last_stride=last_stride)
+        elif model_name == 'senet154':
+            self.base = SENet(block=SEBottleneck, 
+                              layers=[3, 8, 36, 3],
+                              groups=64, 
+                              reduction=16,
+                              dropout_p=0.2, 
+                              last_stride=last_stride)
+        elif model_name == 'resnet50_ibn_a':
+            self.base = resnet50_ibn_a(last_stride)
+
+        if pretrain_choice == 'imagenet':
+            self.base.load_param(model_path)
+            print('Loading pretrained ImageNet model......')
+
+        self.gap = nn.AdaptiveAvgPool2d(1)
+        # self.gap = nn.AdaptiveMaxPool2d(1)
+        self.num_camera = num_camera
+        self.num_ids = num_ids
+        self.num_classes = num_classes
+        self.num_instance = num_instance
+        self.neck = neck
+        self.neck_feat = neck_feat
+
+        if self.neck == 'no':
+            #self.classifier = nn.Linear(self.in_planes, self.num_classes[0])
+            #self.classifier = [nn.Linear(self.in_planes, i) for i in self.num_classes]
+            self.classifier = nn.ModuleList()
+            self.classifier.extend([nn.Linear(self.in_planes, num_classes[i]) for i in range(self.num_camera)])
+            # self.classifier = nn.Linear(self.in_planes, self.num_classes, bias=False)     # new add by luo
+            # self.classifier.apply(weights_init_classifier)  # new add by luo
+        elif self.neck == 'bnneck':
+            self.bottleneck = nn.BatchNorm1d(self.in_planes)
+            self.bottleneck.bias.requires_grad_(False)  # no shift
+            self.classifier = nn.Linear(self.in_planes, self.num_classes, bias=False)
+
+            self.bottleneck.apply(weights_init_kaiming)
+            self.classifier.apply(weights_init_classifier)
+
+    def forward(self, x):
+        global_feat = self.gap(self.base(x))  # (b, 2048, 1, 1)
+        global_feat = global_feat.view(global_feat.shape[0], -1)  # flatten to (bs, 2048)
+
+        global_feat_id = torch.split(global_feat, self.num_ids * self.num_instance) # (self.num_ids * self.num_instance, 2048)
+        if self.neck == 'no':
+            feat = global_feat
+        elif self.neck == 'bnneck':
+            feat = self.bottleneck(global_feat)  # normalize for angular softmax
+
+
+        if self.training:
+            cls_score = [self.classifier[i](global_feat_id[i]) for i in range(self.num_camera) ]
+
+            all_cls_score =  [self.classifier[i](feat) for i in range(self.num_camera)]
+            all_cls_score1 = [torch.reshape(i, (-1, self.num_ids, self.num_instance, i.shape[-1]) )  for i in all_cls_score] 
+            all_cls_score2 = [torch.mean(i, dim=2) for i in all_cls_score1]
+            all_cls_score3 = [torch.argmax(i, dim=2) for i in all_cls_score2]
+            all_cls_score4 = torch.stack(all_cls_score3, dim=0)
+            return cls_score, all_cls_score2, all_cls_score4  # global feature for triplet loss
         else:
             if self.neck_feat == 'after':
                 # print("Test with feature after BN")

@@ -1,9 +1,12 @@
 MODEL:
   PRETRAIN_CHOICE: 'imagenet'
   PRETRAIN_PATH: 'C:/Users/laobo/.cache/torch/checkpoints/resnet50-19c8e357.pth'
+  METRIC_LOSS_TYPE: 'triplet'
   IF_LABELSMOOTH: 'no'
   IF_WITH_CENTER: 'no'
   NECK: 'no'
+
+
 
 INPUT:
   SIZE_TRAIN: [256, 128]
@@ -13,10 +16,13 @@ INPUT:
   PADDING: 10
 
 DATASETS:
-  NAMES: ('market1501')
+  NAMES: ('Market1501_multi_camera')
 
 DATALOADER:
-  SAMPLER: 'softmax'
+  SAMPLER: 'softmax_multi_camera'
+  NUM_CAMERA: 6
+  NUM_INSTANCE: 2
+  NUM_IDS: 6
   NUM_WORKERS: 8
 
 SOLVER:
@@ -26,7 +32,7 @@ SOLVER:
   BIAS_LR_FACTOR: 1
   WEIGHT_DECAY: 0.0005
   WEIGHT_DECAY_BIAS: 0.0005
-  IMS_PER_BATCH: 48
+  IMS_PER_BATCH: 72
 
   STEPS: [30, 55]
   GAMMA: 0.1
@@ -41,5 +47,7 @@ SOLVER:
 
 TEST:
   IMS_PER_BATCH: 128
-
-
+  RE_RANKING: 'no'
+  WEIGHT: "path"
+  NECK_FEAT: 'after'
+  FEAT_NORM: 'yes'

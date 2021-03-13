@@ -15,7 +15,7 @@ sys.path.append('.')
 from config import cfg
 from data import make_data_loader
 from engine.trainer import do_train, do_train_with_center
-from modeling import build_model
+from modeling import build_model, build_model_MATE
 from layers import make_loss, make_loss_with_center
 from solver import make_optimizer, make_optimizer_with_center, WarmupMultiStepLR
 
@@ -25,9 +25,15 @@ from utils.logger import setup_logger
 def train(cfg):
     # prepare dataset
     train_loader, val_loader, num_query, num_classes = make_data_loader(cfg)
+    #print(train_loader, val_loader, num_query, num_classes)
+    #print(next(iter(train_loader)))
+    # return
 
     # prepare model
-    model = build_model(cfg, num_classes)
+    if cfg.DATALOADER.SAMPLER == 'softmax_multi_camera':
+        model = build_model_MATE(cfg, num_classes)
+    else:
+        model = build_model(cfg, num_classes)
 
     if cfg.MODEL.IF_WITH_CENTER == 'no':
         print('Train without center loss, the loss type is', cfg.MODEL.METRIC_LOSS_TYPE)
@@ -65,7 +71,8 @@ def train(cfg):
             scheduler,      # modify for using self trained model
             loss_func,
             num_query,
-            start_epoch     # add for using self trained model
+            start_epoch,     # add for using self trained model
+            num_classes
         )
     elif cfg.MODEL.IF_WITH_CENTER == 'yes':
         print('Train with center loss, the loss type is', cfg.MODEL.METRIC_LOSS_TYPE)

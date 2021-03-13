@@ -3,7 +3,8 @@
 @author:  liaoxingyu
 @contact: sherlockliao01@gmail.com
 """
-
+import sys
+import torch
 import torch.nn.functional as F
 
 from .triplet_loss import TripletLoss, CrossEntropyLabelSmooth
@@ -25,6 +26,31 @@ def make_loss(cfg, num_classes):    # modified by gu
     if sampler == 'softmax':
         def loss_func(score, feat, target):
             return F.cross_entropy(score, target)
+            
+    elif cfg.DATALOADER.SAMPLER == 'softmax_multi_camera':
+        num_camera = len(num_classes)
+        def loss_func(score, all_classifier_score, target, id_association):
+            targets = torch.chunk(target, num_camera)
+            ys = torch.reshape(target, (num_camera, cfg.DATALOADER.NUM_IDS, -1))
+
+            loss_ml = []
+            for i in range(cfg.DATALOADER.NUM_CAMERA):
+                for j in range(cfg.DATALOADER.NUM_IDS):
+                    for pid,camid in id_association[i][j]:
+                        # print(all_classifier_score[i][j])
+                        # print(all_classifier_score[i][j].shape)
+                        # print(torch.tensor(pid))
+                        # sys.exit(0)
+                        t = torch.tensor(pid, dtype=torch.long, device='cuda').reshape((1,))
+                        loss_ml.append( F.cross_entropy(all_classifier_score[i][camid][j].reshape(1,-1), t )) 
+            
+
+
+            return torch.stack([F.cross_entropy(score[i], targets[i]) for i in range(num_camera)]).mean() + torch.stack(loss_ml).mean()
+            #print(target,target.shape)
+            #sys.exit(0)
+            #return  [F.cross_entropy(score[i], targets[i]) for i in range(num_camera)]
+
     elif cfg.DATALOADER.SAMPLER == 'triplet':
         def loss_func(score, feat, target):
             return triplet(feat, target)[0]
